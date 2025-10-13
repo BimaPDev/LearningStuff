@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,12 +36,11 @@ func checkFileExist(path string) (bool, error) {
 }
 
 func saveTodos(todos []Todo) error {
-    // TODO: marshal pretty JSON; write to p; perms 0644
 	p, err := storePath()
 	if err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(todos, "", "")
+	b, err := json.MarshalIndent(todos, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -99,10 +100,8 @@ func findIndexByID(todos []Todo, id int) int {
 func ensureStoreFile(p string) error {
 	ok, err := checkFileExist(p)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "checkFileExist error:", err)
-		os.Exit(1)
+		return fmt.Errorf("checkFileExist: %w", err)
 	}
-
 	if ok {
 		return nil
 	}
@@ -112,13 +111,13 @@ func ensureStoreFile(p string) error {
 		if errors.Is(err, os.ErrExist) {
 			return nil
 		}
-		return fmt.Errorf("created: %v", err)
+		return fmt.Errorf("create: %w", err)
 	}
 	defer f.Close()
 	if _, err := f.WriteString("[]"); err != nil {
-	return fmt.Errorf("init write: %w", err)
+		return fmt.Errorf("init write: %w", err)
 	}
-	fmt.Printf("crated: %v", p)
+	fmt.Printf("created: %s\n", p)
 	return nil
 }
 
@@ -130,7 +129,7 @@ func addTodo(text string) error {
 
 	p, err := storePath()
 	if err != nil {
-		return nil
+		return err
 	}
 	if err := ensureStoreFile(p); err != nil {
 		return err
@@ -138,15 +137,14 @@ func addTodo(text string) error {
 
 	todos, err := loadTodos()
 	if err != nil {
-		return nil
+		return err
 	}
 
 	t := Todo{
-		ID: nextID(todos),
-		Task: text,
+		ID:      nextID(todos),
+		Task:    text,
 		Created: time.Now(),
 	}
-
 	todos = append(todos, t)
 	return saveTodos(todos)
 }
@@ -178,41 +176,93 @@ func listTodos() error {
 }
 
 func markDone(id int) error {
-    // TODO: load; find by id; set Completed=true; CompletedAt=now; save
+	if id <= 0 {
+		return errors.New("id must be positive")
+	}
 	p, err := storePath()
 	if err != nil {
-		return nil
+		return err
 	}
-	if err := ensureStoreFile(p); err == nil {
-		return nil
+	if err := ensureStoreFile(p); err != nil {
+		return err
 	}
 
 	todos, err := loadTodos()
 	if err != nil {
-		return nil
-	}
-	if strings.Contains(id){
-		
+		return err
 	}
 
+	i := findIndexByID(todos, id)
+	if i == -1 {
+		return fmt.Errorf("no todo with id %d", id)
+	}
+
+	if !todos[i].Completed {
+		now := time.Now()
+		todos[i].Completed = true
+		todos[i].CompletedAt = &now
+	}
+	return saveTodos(todos)
 }
 
-//func removeTodo(id int) error {
-//    // TODO: load; filter out id; save
-//}
-//
-//func clearTodos() error {
-//    // TODO: save empty slice
-//}
-//
-//func usage() {
-//    // TODO: print commands
-//}
-//
-//func dispatch(args []string) error {
-//    // TODO: switch args[0]: add/list/done/rm/clear; parse rest; call above
-//}
-//
-func main() {
+func removeTodo(id int) error {
+	if id <= 0 {
+		return errors.New("id must be positive")
+	}
+	p, err := storePath()
+	if err != nil {
+		return err
+	}
+	if err := ensureStoreFile(p); err != nil {
+		return err
+	}
 
+	todos, err := loadTodos()
+	if err != nil {
+		return err
+	}
+
+	i := findIndexByID(todos, id)
+	if i == -1 {
+		return fmt.Errorf("no todo with id %d", id)
+	}
+
+	todos = append(todos[:i], todos[i+1:]...)
+	return saveTodos(todos)
+}
+
+func clearTodos() error {
+    // TODO: save empty slice
+	return saveTodos([]Todo{})
+}
+
+func usage() {
+    fmt.Fprintln(os.Stderr, "usage: todo add <text> | todo list | todo done <id> | todo rm <id> | todo clear")
+}
+
+func dispatch(args []string) error {
+    if len(args) == 0 { usage(); return nil }
+    switch args[0] {
+    case "add":
+        return addTodo(strings.Join(args[1:], " "))
+    case "list":
+        return listTodos()
+    case "done":
+        if len(args) < 2 { return errors.New("need id") }
+        id, err := strconv.Atoi(args[1]); if err != nil { return err }
+        return markDone(id)
+    case "rm":
+        if len(args) < 2 { return errors.New("need id") }
+        id, err := strconv.Atoi(args[1]); if err != nil { return err }
+        return removeTodo(id)
+    case "clear":
+        return saveTodos([]Todo{})
+    default:
+        usage(); return nil
+    }
+}
+func main() {
+	p, err := storePath(); if err != nil { log.Fatal(err) }
+	if err := ensureStoreFile(p); err != nil { log.Fatal(err) }
+	if err := dispatch(os.Args[1:]); err != nil { log.Fatal(err) }
 }
